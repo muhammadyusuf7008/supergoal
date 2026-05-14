@@ -17,16 +17,18 @@ Slash commands only fire from user input, so Stage 7 is an honest one-paste hand
 Three commands inside a Claude Code session:
 
 ```text
-/plugin marketplace add robzilla1738/superplan
+/plugin marketplace add https://github.com/robzilla1738/superplan.git
 /plugin install superplan@superplan
 /reload-plugins
 ```
 
-That's it. `/superplan` is available immediately.
+That's it. `/superplan` is available immediately. Verified working (installs as `superplan@superplan` v0.4.1, ~307 tokens always-on + ~10k on-invoke).
+
+> **Tip:** the `owner/repo` shorthand (`/plugin marketplace add robzilla1738/superplan`) also works **only if you have GitHub SSH keys configured**, since it defaults to `git@github.com:` cloning. If you hit "SSH authentication failed" or "Permission denied (publickey)", use the HTTPS URL form above instead.
 
 If `/plugin install` errors with "not found", run `/plugin marketplace update superplan` and try again.
 
-**Manual install** (if you don't want to use the marketplace):
+**Manual install** (if you'd rather skip the marketplace flow entirely):
 
 ```bash
 mkdir -p ~/.claude/skills
