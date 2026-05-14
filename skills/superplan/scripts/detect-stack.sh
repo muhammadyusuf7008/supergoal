@@ -1,153 +1,129 @@
 #!/usr/bin/env bash
-# detect-stack.sh — scan current working directory for stack markers,
-# emit a markdown summary on stdout. Intended to be redirected into
-# .superplan/context.md by the superplan skill.
-#
-# Compatible with bash 3.2+ (no associative arrays).
+# detect-stack.sh — identify language, package manager, framework, build/test/lint commands
+# Writes a compact markdown summary to stdout for the planning context.
 
-set -u
+set -uo pipefail
 
-echo "# Context"
+echo "# Stack context"
 echo
-echo "Generated at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "Working dir: $(pwd)"
+echo "_Generated $(date '+%Y-%m-%d %H:%M:%S')_"
 echo
 
-# --- Stack markers ---------------------------------------------------------
+# --- Language / framework signals ---
+echo "## Language signals"
 
-check_marker() {
-  local marker="$1"
-  local label="$2"
-  if compgen -G "$marker" > /dev/null 2>&1; then
-    echo "- \`$marker\` — $label"
-    return 0
-  fi
-  return 1
-}
-
-echo "## Stack markers"
-echo
-
-FOUND=0
-check_marker "package.json"       "Node.js / JavaScript / TypeScript" && FOUND=1
-check_marker "pnpm-lock.yaml"     "Node.js (pnpm)"                    && FOUND=1
-check_marker "yarn.lock"          "Node.js (yarn)"                    && FOUND=1
-check_marker "bun.lockb"          "Bun"                               && FOUND=1
-check_marker "Cargo.toml"         "Rust"                              && FOUND=1
-check_marker "pyproject.toml"     "Python (pyproject)"                && FOUND=1
-check_marker "requirements.txt"   "Python (requirements.txt)"         && FOUND=1
-check_marker "Pipfile"            "Python (pipenv)"                   && FOUND=1
-check_marker "go.mod"             "Go"                                && FOUND=1
-check_marker "Gemfile"            "Ruby"                              && FOUND=1
-check_marker "composer.json"      "PHP (composer)"                    && FOUND=1
-check_marker "pom.xml"            "Java (Maven)"                      && FOUND=1
-check_marker "build.gradle"       "Java/Kotlin (Gradle)"              && FOUND=1
-check_marker "build.gradle.kts"   "Kotlin (Gradle)"                   && FOUND=1
-check_marker "Package.swift"      "Swift (SPM)"                       && FOUND=1
-check_marker "*.xcodeproj"        "Xcode project"                     && FOUND=1
-check_marker "mix.exs"            "Elixir (mix)"                      && FOUND=1
-check_marker "deno.json"          "Deno"                              && FOUND=1
-check_marker "deno.jsonc"         "Deno"                              && FOUND=1
-check_marker "flake.nix"          "Nix flake"                         && FOUND=1
-check_marker "Dockerfile"         "Containerised (Dockerfile present)" && FOUND=1
-
-[ $FOUND -eq 0 ] && echo "_No common stack markers found in the working directory._"
-echo
-
-# --- Node project hints ----------------------------------------------------
-
-if [ -f package.json ]; then
-  echo "## Node project hints"
-  echo
+if [[ -f package.json ]]; then
+  echo "- **Node/JS/TS** — package.json present"
   if command -v jq >/dev/null 2>&1; then
-    NAME=$(jq -r '.name // "(unnamed)"' package.json)
-    echo "- Package: \`$NAME\`"
-    echo "- Scripts:"
-    jq -r '.scripts // {} | to_entries[] | "  - `\(.key)` → `\(.value)`"' package.json
-    echo "- Notable deps:"
-    jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys[]' package.json \
-      | grep -iE 'next|react|vue|svelte|astro|nuxt|remix|express|fastify|nest|vite|webpack|jest|vitest|playwright|cypress|prisma|drizzle|trpc|tailwind|zod' \
-      | head -20 | sed 's/^/  - `/' | sed 's/$/`/'
-  else
-    echo "_jq not installed; install for richer package.json parsing._"
-    grep -E '"name"|"scripts"' package.json | head -5 | sed 's/^/    /'
+    name=$(jq -r '.name // "(unnamed)"' package.json)
+    version=$(jq -r '.version // "?"' package.json)
+    echo "  - Name: \`$name\`, version: \`$version\`"
+    deps=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys[]' package.json 2>/dev/null | head -40)
+    if [[ -n "$deps" ]]; then
+      echo "  - Top dependencies: $(echo "$deps" | head -15 | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')"
+    fi
+    # framework detection
+    for fw in next react vue svelte solid astro nuxt remix express fastify nestjs hono; do
+      if echo "$deps" | grep -qx "$fw"; then
+        echo "  - Framework: **$fw**"
+      fi
+    done
   fi
-  echo
 fi
 
-# --- Suggested verification commands --------------------------------------
-
-echo "## Suggested verification commands"
-echo
-if [ -f package.json ]; then
-  if   [ -f pnpm-lock.yaml ]; then PM=pnpm
-  elif [ -f yarn.lock      ]; then PM=yarn
-  elif [ -f bun.lockb      ]; then PM=bun
-  else PM=npm
+if [[ -f pyproject.toml || -f requirements.txt || -f setup.py ]]; then
+  echo "- **Python** — pyproject.toml / requirements.txt / setup.py present"
+  if [[ -f pyproject.toml ]] && grep -qE '\[tool\.poetry\]|\[tool\.uv\]|\[tool\.hatch\]' pyproject.toml 2>/dev/null; then
+    grep -oE '\[tool\.[a-z]+\]' pyproject.toml | sort -u | sed 's/^/  - Build system: /'
   fi
-  echo "- Package manager: \`$PM\`"
-  echo "- Build:     \`$PM run build\`"
-  echo "- Typecheck: \`$PM run typecheck\` (or \`tsc --noEmit\`)"
-  echo "- Lint:      \`$PM run lint\`"
-  echo "- Test:      \`$PM test\`"
-  echo "- Dev:       \`$PM run dev\`"
-elif [ -f Cargo.toml ]; then
-  echo "- Build: \`cargo build\`"
-  echo "- Test:  \`cargo test\`"
-  echo "- Lint:  \`cargo clippy --all-targets --all-features -- -D warnings\`"
-  echo "- Fmt:   \`cargo fmt --check\`"
-elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
-  echo "- Test:      \`pytest\` (if installed)"
-  echo "- Lint:      \`ruff check\` (or \`flake8\`)"
-  echo "- Typecheck: \`mypy .\` (or \`pyright\`)"
-elif [ -f go.mod ]; then
-  echo "- Build: \`go build ./...\`"
-  echo "- Test:  \`go test ./...\`"
-  echo "- Lint:  \`golangci-lint run\` (or \`go vet ./...\`)"
-elif [ -f Package.swift ]; then
-  echo "- Build: \`swift build\`"
-  echo "- Test:  \`swift test\`"
+fi
+
+if [[ -f Cargo.toml ]]; then
+  echo "- **Rust** — Cargo.toml present"
+fi
+
+if [[ -f go.mod ]]; then
+  echo "- **Go** — go.mod present ($(head -1 go.mod | awk '{print $2}'))"
+fi
+
+if [[ -d "ios" && -f "ios/Podfile" ]] || ls *.xcodeproj >/dev/null 2>&1 || ls *.xcworkspace >/dev/null 2>&1; then
+  echo "- **iOS/macOS (Swift)** — Xcode project present"
+fi
+
+if [[ -f "build.gradle" || -f "build.gradle.kts" || -f "settings.gradle" ]]; then
+  echo "- **JVM / Android** — Gradle project"
+fi
+
+echo
+
+# --- Package manager ---
+echo "## Package manager"
+if [[ -f pnpm-lock.yaml ]]; then
+  echo "- **pnpm** (pnpm-lock.yaml)"
+elif [[ -f yarn.lock ]]; then
+  echo "- **yarn** (yarn.lock)"
+elif [[ -f bun.lockb || -f bun.lock ]]; then
+  echo "- **bun** (bun.lock)"
+elif [[ -f package-lock.json ]]; then
+  echo "- **npm** (package-lock.json)"
+elif [[ -f uv.lock ]]; then
+  echo "- **uv** (uv.lock)"
+elif [[ -f poetry.lock ]]; then
+  echo "- **poetry** (poetry.lock)"
+elif [[ -f Pipfile.lock ]]; then
+  echo "- **pipenv** (Pipfile.lock)"
+elif [[ -f Cargo.lock ]]; then
+  echo "- **cargo** (Cargo.lock)"
+elif [[ -f go.sum ]]; then
+  echo "- **go modules** (go.sum)"
 else
-  echo "_Unknown stack — fill verification commands manually in VERIFY.md._"
+  echo "- _none detected_"
 fi
 echo
 
-# --- Risky surfaces (heuristic) -------------------------------------------
-
-echo "## Risky surfaces (heuristic)"
+# --- Scripts / commands ---
+echo "## Likely commands"
+if [[ -f package.json ]] && command -v jq >/dev/null 2>&1; then
+  echo "From package.json scripts:"
+  jq -r '.scripts // {} | to_entries[] | "- `\(.key)` → `\(.value)`"' package.json 2>/dev/null | head -25
+fi
+if [[ -f Makefile ]]; then
+  echo
+  echo "Makefile targets:"
+  grep -E '^[a-zA-Z][a-zA-Z0-9_-]*:' Makefile | sed 's/:.*//' | sort -u | head -20 | sed 's/^/- `/' | sed 's/$/`/'
+fi
 echo
 
-HITS=0
-
-if [ -d auth ] || [ -d src/auth ] || [ -d lib/auth ]; then
-  echo "- Auth code present (directory \`auth/\`, \`src/auth/\`, or \`lib/auth/\`)"
-  HITS=$((HITS+1))
+# --- Git ---
+echo "## Git"
+if [[ -d .git ]]; then
+  branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
+  remote=$(git config --get remote.origin.url 2>/dev/null || echo "(no remote)")
+  ahead=$(git rev-list --count HEAD ^origin/HEAD 2>/dev/null || echo "?")
+  dirty=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+  echo "- Branch: \`$branch\`"
+  echo "- Remote: $remote"
+  echo "- Working tree: ${dirty} files changed"
+else
+  echo "- Not a git repo"
 fi
-
-# grep -q exits non-zero on no match. Use plain conditional.
-if grep -rqEli -m1 'stripe|payment|subscription' \
-     --include='*.ts' --include='*.tsx' \
-     --include='*.js' --include='*.jsx' \
-     --include='*.py' --include='*.go'  --include='*.rs' \
-     . 2>/dev/null; then
-  echo "- Payment / billing code present"
-  HITS=$((HITS+1))
-fi
-
-if [ -d migrations ] || [ -d db/migrations ] || [ -d prisma/migrations ] || [ -d supabase/migrations ]; then
-  echo "- Database migrations directory present"
-  HITS=$((HITS+1))
-fi
-
-if [ -f .env ] || [ -f .env.local ] || [ -f .env.production ]; then
-  echo "- Local env file present (do not commit secrets)"
-  HITS=$((HITS+1))
-fi
-
-if [ -f Dockerfile ] || [ -f docker-compose.yml ] || [ -f vercel.json ] || [ -f netlify.toml ] || [ -d .github/workflows ]; then
-  echo "- Deploy / CI config present"
-  HITS=$((HITS+1))
-fi
-
-[ $HITS -eq 0 ] && echo "_None obvious._"
 echo
+
+# --- Test / lint heuristics ---
+echo "## Test / lint heuristics"
+if [[ -f package.json ]] && command -v jq >/dev/null 2>&1; then
+  scripts=$(jq -r '.scripts // {} | keys[]' package.json 2>/dev/null)
+  for key in build typecheck "type-check" test lint check ci dev start; do
+    if echo "$scripts" | grep -qx "$key"; then
+      echo "- Has script: \`$key\`"
+    fi
+  done
+fi
+if [[ -f .eslintrc.* || -f eslint.config.* ]]; then echo "- ESLint config present"; fi
+if [[ -f .prettierrc* ]]; then echo "- Prettier config present"; fi
+if [[ -f tsconfig.json ]]; then echo "- TypeScript present (tsconfig.json)"; fi
+if [[ -f pytest.ini || -f conftest.py ]] || (grep -q 'pytest' pyproject.toml 2>/dev/null); then echo "- pytest detected"; fi
+if [[ -f .swiftlint.yml ]]; then echo "- SwiftLint config present"; fi
+echo
+
+echo "_End stack context._"

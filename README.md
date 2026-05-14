@@ -1,92 +1,109 @@
 # Superplan
 
-A goal-compiler skill for Claude Code and Codex.
+Plan deeply, then autonomously build until it's done.
 
-`/superplan <task>` turns a vague build request into a strict, testable project spec, renders it as a reviewable HTML plan, lets you iterate conversationally, and then emits a measurable `/goal` command that drives an autonomous build to a verifiable end state.
+`/superplan <what you want>` recons your codebase, pulls in your saved preferences from memory, decomposes the work into the right number of phases for the task, gets one confirmation from you, then dispatches a single `/goal` that drives the entire build through to completion with built-in retry and fix-spec recovery.
 
-## What makes it different
+Works on **Claude Code** and **Codex** (Codex CLI).
 
-Most "autonomous build" loops (Ralph, etc.) are persistence wrappers — they keep the model running until it claims it's done. Superplan adds four things on top:
+## Why one `/goal` (not a chain)
 
-1. **A plan compiler.** Vague intent → strict spec → measurable `/goal` condition. Done is defined before the build starts, not after.
-2. **A hash-pinned contract.** `LOCK.json` records sha256s of PLAN/ACCEPTANCE/VERIFY/POLISH so the agent can't silently weaken the contract mid-run.
-3. **Transcript-visible evidence.** The `/goal` evaluator only sees the conversation, so the compiled goal forces the agent to *paste* its `SUPERPLAN_MANIFEST` (contract surfaces), `SUPERPLAN_STATE` (per-turn ledger), `FAILURE_PROBE` (adversarial check), and `SELF_REVIEW` (final claim) blocks. References to files alone aren't enough.
-4. **Verification matrix, not flat list.** Mandatory commands always run; conditional commands run when their trigger applies; non-terminating commands (dev servers, `docker compose up`) are allowlisted so the stuck-watcher doesn't kill them mid-run.
-
-"Perfect" is not a stopping condition. "Build passes, tests pass, lint passes, polish phases complete, FAILURE_PROBE found no blocking issues, SELF_REVIEW confirms it" is.
-
-## Workflow
-
-```text
-/superplan <your request>
-  │
-  ├─ 1. Intake        classify the task, ask only blocking questions
-  ├─ 2. Recon         brownfield → detect-stack.sh + summarize-repo.sh
-  │                   greenfield → environment recon (runtimes + folder)
-  ├─ 3. Draft         write .superplan/*.md, render plan.html, open in browser
-  ├─ 4. Iterate       feedback in chat → skill edits files → re-renders HTML
-  └─ 5. Lock          write LOCK.json (sha256s) + GOAL.txt + paste/run instructions
-
-Then:
-  Paste:  /goal <contents of .superplan/GOAL.txt minus leading "/goal ">
-  Or run: ./skills/superplan/scripts/superplan-go
-```
-
-## Host support
-
-| Capability | Claude Code | Codex |
-|---|---|---|
-| Skill format | production | format-compatible (best effort) |
-| `/goal` command | production | experimental, requires `features.goals = true` |
-| `claude -p "/goal ..."` headless | yes | runner flag may differ; see `docs/codex-setup.md` |
-| Plugin manifest | `.claude-plugin/plugin.json` | `.codex-plugin/plugin.json` |
-| Skill location | `~/.claude/skills/<name>/` or project `.claude/skills/` | `~/.agents/skills/<name>/` or project `.agents/skills/` |
-
-Codex parity isn't independently verified — please open an issue if you hit a deviation.
+`/goal` on both hosts takes a short **end-state condition** that an evaluator checks against the transcript after each turn — not a long task body. Superplan v3 leverages this directly: one `/goal` covers the whole run; phase work lives in files the agent reads from disk. No char budget, no inter-session chain dispatch, no fragility.
 
 ## Install
 
-### Claude Code (project skill)
+### Claude Code
+
+Via the plugin marketplace (one-line install):
+
+```text
+/plugin install superplan@robzilla1738
+```
+
+Or clone manually:
 
 ```bash
-git clone https://github.com/robzilla1738/superplan.git
-ln -s "$PWD/superplan/skills/superplan" .claude/skills/superplan
+mkdir -p ~/.claude/skills
+git clone https://github.com/robzilla1738/superplan /tmp/superplan
+cp -R /tmp/superplan/skills/superplan ~/.claude/skills/
 ```
 
-### Claude Code (personal skill)
+### Codex
 
-```bash
-git clone https://github.com/robzilla1738/superplan.git ~/Code/superplan
-ln -s ~/Code/superplan/skills/superplan ~/.claude/skills/superplan
-```
+Add the plugin's skills directory to your Codex skills path (see `~/.codex/` setup) or copy `skills/superplan` into wherever your Codex install reads skills from.
 
-### Codex (experimental — please report issues)
-
-```bash
-git clone https://github.com/robzilla1738/superplan.git ~/Code/superplan
-ln -s ~/Code/superplan/skills/superplan ~/.agents/skills/superplan
-```
-
-See [docs/install.md](docs/install.md) for plugin install, troubleshooting, and the runner setup.
-
-## Repo layout
+## Use
 
 ```
-superplan/
-├── skills/superplan/             single source of truth
-│   ├── SKILL.md
-│   ├── references/               rubrics, formats, flow docs
-│   ├── templates/                .md + plan.html templates
-│   └── scripts/                  detect, summarize, render, open, runner, watcher
-├── .claude-plugin/plugin.json    Claude Code plugin manifest
-├── .codex-plugin/plugin.json     Codex plugin manifest (experimental)
-├── examples/                     frozen runs from real builds
-└── docs/                         install + setup guides
+/superplan build me an Expo app that converts photos to ASCII art
 ```
 
-## Status
+What happens:
 
-V1 (MVP). Tested against Claude Code; Codex side is best-effort. Open an issue if you hit a frontmatter or `$ARGUMENTS` mismatch.
+1. **Stage 0 — Available context.** Auto-detects your memory directory, preloads relevant feedback/user/project memories, senses which tools/MCPs are available this session.
+2. **Stage 1 — Intake.** Asks 0–2 clarifying questions only for true gaps memory + prompt don't already answer. Most well-described tasks ask zero.
+3. **Stage 2 — Recon.** Parallel codebase/environment scan.
+4. **Stage 3 — Deep think.** Identifies top-3 risks + dependencies. Uses Context7/WebSearch if available (optional, not required).
+5. **Stage 4 — Decompose.** Phase count derived from the task — no fixed cap.
+6. **Stage 5 — Write specs.** `ROADMAP.md` + `STATE.md` + one `phase-N.md` work spec per phase.
+7. **Stage 6 — Plan review.** Shows phases, assumptions, risks, and applied memories. Concrete revision menu: **Start now / Adjust assumption / Tweak a phase / Restructure phases.**
+8. **Stage 7 — Dispatch one `/goal`.** Runs phases sequentially with 3-strike auto-retry → fix-spec → handoff. Writes a memory at each phase boundary so future runs start smarter.
+
+## Self-healing failure recovery
+
+Built into every run:
+
+- **First failure** of any acceptance criterion → `FAILURE_PROBE` printed, probe injected as feedback, **auto-retry once**.
+- **Second failure** → `FAILURE_ESCALATE`, write a focused fix spec at `phase-N.fix.md`, execute inline.
+- **Third failure** → `FAILURE_HANDOFF`, mark state `BLOCKED`, stop. User takes the wheel.
+
+Flaky envs, typos, and missed deps self-resolve. Only real blockers escalate.
+
+## Memory writeback
+
+Each phase ends with a "non-obvious learnings" check. If anything a future run on a similar task would benefit from was learned (an API quirk, a confirmed user preference, a project-level fact, a failure-and-fix pattern), it's saved to your memory directory using the standard `name`/`description`/`metadata.type` frontmatter. The final phase always writes a `project_<slug>.md` memory pointing at the new/changed project.
+
+## Artifacts a run produces
+
+All under `.superplan/` in the project directory:
+
+```
+.superplan/
+├── ROADMAP.md            full plan
+├── STATE.md              live progress, updated per phase
+├── THINKING.md           risks, dependencies, applied memories, best practices
+├── PROTOCOL.md           execution loop + failure recovery (copied at dispatch)
+├── context.md            recon output
+├── repo-map.md           brownfield only
+├── applied-memories.md   memory hits that informed the plan
+├── tools.md              detected MCPs / skills / hosts
+└── phases/
+    ├── phase-1.md
+    ├── phase-2.md
+    ├── ...
+    └── phase-N.md
+```
+
+## Skill internals
+
+```
+skills/superplan/
+├── SKILL.md
+├── references/
+│   ├── planning-depth.md      what makes a plan deep enough to deserve "Super"
+│   ├── phase-design.md        how to slice phases (adaptive count, no cap)
+│   └── goal-format.md         /goal mechanics on CC + Codex, required transcript blocks
+├── scripts/
+│   ├── detect-env.sh          greenfield env recon
+│   ├── detect-stack.sh        brownfield stack recon
+│   ├── summarize-repo.sh      repo map
+│   └── validate-phase.sh      checks phase spec structure
+└── templates/
+    ├── ROADMAP.md
+    ├── STATE.md
+    ├── phase-goal.txt         phase spec skeleton
+    └── PROTOCOL.md            execution loop + failure recovery
+```
 
 ## License
 

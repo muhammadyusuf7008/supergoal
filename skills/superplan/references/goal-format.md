@@ -1,146 +1,134 @@
 # `/goal` format reference
 
-## What `/goal` is
+## What `/goal` actually is
 
-`/goal <condition>` is a host command (Claude Code; experimental in Codex) that sets a measurable end state for the session. The host continues working — running tools, editing files, asking minimal questions — until either (a) the evaluator decides the condition is met based on the transcript, or (b) you abort, or (c) it hits an internal cap.
+`/goal <end-state condition>` is a host slash command available in both Claude Code and Codex (Codex CLI). It is **not** a task description. It is a **measurable end-state condition** that a fast evaluator checks against the transcript after each agent turn. The agent keeps working — running tools, editing files — until the condition holds, at which point control returns to the user.
 
-**The evaluator only judges what's visible in the conversation.** It does not independently run tools or read files. The compiled goal therefore must force the agent to *surface* its contract into the transcript — phases, mandatory commands, verifications, evidence — not merely reference files.
+Key implications:
 
-## Hard constraints
+1. **Condition is short.** A long task body in the `/goal` argument is the wrong shape. Long content belongs in files the agent reads from disk.
+2. **The evaluator only sees the transcript.** Conditions must be phrased so the agent's own output can prove them ("X printed", "Y exit code surfaced", "Z file count reported"). The evaluator does not independently run tools or read files.
+3. **Host behaviour:**
+   - **Claude Code**: a small fast model (Haiku) checks the condition each turn; "no" → continue with the reason as guidance; "yes" → clear goal, return control.
+   - **Codex**: auto-continuation loop drives the goal to terminal status (complete / budget_limited / paused / cleared). Five subcommands: `/goal <objective>`, `/goal` (status), `/goal pause`, `/goal resume`, `/goal clear`.
 
-- Max length: **4000 characters**
-- Available in Claude Code (production) and Codex (experimental — may require `features.goals = true`)
+## Superplan's single-`/goal` shape
 
-## Superplan's safe budget
-
-≤ **3800 characters**. Leaves 200-char headroom for whitespace, BOMs, or CLI quoting.
-
-If a draft exceeds this:
-1. Remove inline narrative that duplicates `.superplan/PLAN.md`.
-2. Replace command listings with file references (`see .superplan/VERIFY.md`).
-3. Tighten verbose phrasing.
-4. **Never** trim the references themselves. They are the anchor.
-
-## Required transcript blocks
-
-The compiled goal forces the agent to print three named blocks during execution. These are the contract surfaces the evaluator actually sees.
-
-### SUPERPLAN_MANIFEST (printed once, at execution start)
+Superplan dispatches **one** `/goal` per run. The condition is:
 
 ```
-SUPERPLAN_MANIFEST
-Task: <one-line description from PLAN.md>
-Type: <greenfield | brownfield | bugfix | refactor | ui>
-Max turns: <N>
-Phases:
-  1. <phase 1 name>
-  2. <phase 2 name>
-  ...
-Acceptance summary:
-  - Functional: <N criteria>
-  - Engineering: build/typecheck/lint/test
-  - Polish: <N passes>
-  - Evidence: STATE.md, transcript proof per phase
-Mandatory commands:
-  - <command 1>
-  - <command 2>
-  ...
-Conditional triggers:
-  - <trigger>: <command>
-Polish passes:
-  - UX/copy, edge cases, tests, security, maintainability, diff review, [visual if UI]
-Stop conditions:
-  - all phases complete with evidence
-  - mandatory verifications pass or pre-existing failures proven unrelated
-  - FAILURE_PROBE complete; SELF_REVIEW reports no blocking issues
-Locked files:
-  - PLAN.md sha256: <first 12 chars>
-  - ACCEPTANCE.md sha256: <first 12 chars>
-  - VERIFY.md sha256: <first 12 chars>
-  - POLISH.md sha256: <first 12 chars>
+Execute all phases of .superplan/ROADMAP.md sequentially.
+Read .superplan/phases/phase-N.md for each phase; do the work;
+run mandatory commands; print SUPERPLAN_PHASE_VERIFY then
+SUPERPLAN_PHASE_DONE for each phase; follow the failure-recovery
+protocol in .superplan/PROTOCOL.md if any criterion fails; on the
+final phase, print SUPERPLAN_RUN_COMPLETE.
+
+Done when SUPERPLAN_RUN_COMPLETE appears in the transcript with one
+SUPERPLAN_PHASE_DONE block per phase preceding it and no
+FAILURE_HANDOFF in this run.
 ```
 
-This block makes the contract evaluator-visible. Without it, the evaluator only sees file references and has to trust the agent's summary.
+This works on both hosts. There is no per-phase `/goal` dispatch, no quoted-content fragility, no char budget. The agent reads files as it goes.
 
-### SUPERPLAN_STATE (printed every turn)
+## Required transcript blocks (Superplan-specific)
+
+The phase specs and PROTOCOL.md require the agent to print these named blocks during execution. They are what the human-readable evaluator (you, watching) AND the host evaluator both rely on.
+
+### `SUPERPLAN_PHASE_START` (once per phase, at execution start)
 
 ```
-SUPERPLAN_STATE
-turn: 7
-phase: 3 — Stripe webhook handler
-files_changed: app/api/webhooks/stripe/route.ts, lib/stripe/verify.ts
-evidence_added: command (pnpm test tests/webhooks.test.ts → 4 passed)
-blockers: none
-next_action: hook webhook into subscription update flow
-can_stop: no (phase 3 incomplete; needs subscription update + flip)
+SUPERPLAN_PHASE_START
+Phase: <N> of <total> — <name>
+Task: <one-line from ROADMAP.md>
+Type: <greenfield|brownfield|bugfix|refactor|ui>
+Mandatory commands: <comma-separated list>
+Acceptance criteria: <count>
+Evidence required: <comma-separated types>
+Depends on phases: <list, or "none">
 ```
 
-Compact, scannable, evaluator-friendly. Full per-turn detail goes to `.superplan/logs/turn-007.md`.
+### `SUPERPLAN_PHASE_VERIFY` (once per phase, before DONE)
 
-### FAILURE_PROBE (printed once, immediately before SELF_REVIEW)
+```
+SUPERPLAN_PHASE_VERIFY
+Acceptance:
+- <criterion 1>: <pass|fail> — <evidence>
+- <criterion 2>: <pass|fail> — <evidence>
+...
+Engineering:
+- build: <pass|fail>
+- typecheck: <pass|fail>
+- lint: <pass|fail|pre-existing>
+- tests: <pass|fail|N pre-existing>
+Files changed: <count>
+Notable diffs:
+- <file>: <one-line summary>
+```
+
+### `MEMORY_SAVED` (once per phase, between VERIFY and DONE)
+
+```
+MEMORY_SAVED: <memory-name>     (or "none — nothing non-obvious this phase")
+```
+
+### `SUPERPLAN_PHASE_DONE` (once per phase, final block of the phase)
+
+```
+SUPERPLAN_PHASE_DONE
+Phase <N> complete. STATE.md updated.
+```
+
+### `SUPERPLAN_RUN_COMPLETE` (once, on final phase only)
+
+```
+SUPERPLAN_RUN_COMPLETE
+All <N> phases complete.
+Summary: <5 lines max — what shipped, what changed, what to verify manually>
+```
+
+## Failure blocks (used by recovery protocol)
+
+### `FAILURE_PROBE` (first failure)
 
 ```
 FAILURE_PROBE
-Three most likely break vectors for this implementation:
-  1. <vector 1> — <how it was tested/inspected/fixed/deferred>
-  2. <vector 2> — <how it was tested/inspected/fixed/deferred>
-  3. <vector 3> — <how it was tested/inspected/fixed/deferred>
-Remaining blocking: <yes-with-list | no>
+Phase: <N> — <name>
+Failed criterion: <text>
+Tried: <what was attempted>
+Hypothesis: <root cause guess>
+Next: auto-retry with probe injected
 ```
 
-Adversarial. Forces the agent to argue against itself before claiming success.
-
-### SELF_REVIEW (printed once, after FAILURE_PROBE)
+### `FAILURE_ESCALATE` (second failure — fix spec)
 
 ```
-SELF_REVIEW
-status: no blocking issues found
-checked: UX/copy, edge cases, tests, security, maintainability, diff review[, visual]
-deferred: <list or "none">
-ready_for: review | merge | deploy
+FAILURE_ESCALATE
+Phase: <N> — <name>
+Failed criterion: <text>
+Retry probe history:
+  attempt 1: <summary>
+  attempt 2: <summary>
+Writing fix spec at .superplan/phases/phase-<N>.fix.md
 ```
 
-## Phase-flip evidence types
+### `FAILURE_HANDOFF` (third failure — stop)
 
-A phase may flip to `complete` only when transcript-visible evidence of a matching type is present:
-
-| Type | Looks like |
-|---|---|
-| `command` | command line + exit code + last 20 lines of output |
-| `test` | targeted test output with pass/fail counts |
-| `diff` | `git diff --stat` summary tied to changed files |
-| `screenshot` | path under `.superplan/screenshots/<phase>-<state>.png` |
-| `artifact` | path under `.superplan/artifacts/` (generated files) |
-| `migration` | migration validation output |
-| `review` | explicit code-review note for `documentation-only` or `review-only` phases |
-
-Runtime-behavior phases require `command` or `test` evidence. Phases marked `documentation-only` or `review-only` in PLAN.md can use `review` evidence.
-
-## Lock integrity rule
-
-The goal must include:
-
-> Do not weaken locked plan/acceptance/verify/polish files during execution; update only STATE.md and proof logs unless stopping for an honest handoff.
-
-`.superplan/LOCK.json` pins sha256 hashes of the four locked files. SUPERPLAN_MANIFEST surfaces the first 12 chars of each. If the agent silently edits a locked file to make success easier, future turns' hashes diverge — and the agent is required to call this out and stop with a handoff.
+```
+FAILURE_HANDOFF
+Phase: <N> — <name>
+Failed criterion: <text>
+Three attempts tried:
+  1. <summary>
+  2. <summary>
+  3. <fix spec summary>
+Suggested next move: <one line>
+STATE.md updated to BLOCKED. User intervention required.
+```
 
 ## Anti-patterns
 
-- **"Be perfect."** Not measurable.
-- **"Until done."** Done by whose definition?
-- **"Tests pass."** Which tests? Run with which command?
-- **"All criteria met."** Criteria are in a file the evaluator can't see. Surface them in MANIFEST.
-- **Non-terminating commands marked mandatory.** They don't exit, so they can't pass.
-
-## Validation checklist (apply before writing `.superplan/GOAL.txt`)
-
-- [ ] References PLAN, ACCEPTANCE, VERIFY, POLISH, LOCK.json
-- [ ] Requires SUPERPLAN_MANIFEST at execution start
-- [ ] Requires SUPERPLAN_STATE every turn
-- [ ] Requires FAILURE_PROBE before SELF_REVIEW
-- [ ] Defines evidence types for phase completion
-- [ ] Distinguishes mandatory vs conditional verification
-- [ ] Forbids weakening locked files
-- [ ] Defines stuck/handoff conditions and writes `.superplan/HANDOFF.md`
-- [ ] Contains explicit turn cap
-- [ ] Length ≤ 3800 chars
+- **Don't stuff long task content into the `/goal` argument.** Use a short condition; put work in files.
+- **Don't make conditions the evaluator can't verify from the transcript.** "Tests pass" is wrong (evaluator can't run tests); "`SUPERPLAN_PHASE_DONE` printed for all phases" is right.
+- **Don't chain `/goal` commands across sessions.** One run = one `/goal`. The agent loops internally inside that session.
+- **Don't skip evidence to save space.** Files have no char budget — be exhaustive.

@@ -1,108 +1,80 @@
 #!/usr/bin/env bash
-# summarize-repo.sh — emit a repo map (git state + tree + entry points)
-# on stdout as markdown. Intended for redirect into .superplan/repo-map.md.
+# summarize-repo.sh — compressed repo map for planning context
+# Writes markdown to stdout.
 
-set -u
+set -uo pipefail
 
 echo "# Repo map"
 echo
-echo "Generated at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "_Generated $(date '+%Y-%m-%d %H:%M:%S')_"
 echo
 
-# --- Git ------------------------------------------------------------------
-
-echo "## Git"
+# --- High level shape ---
+echo "## Top-level layout"
+ls -A1 2>/dev/null | grep -v "^\." | head -40 | sed 's/^/- /'
 echo
-if [ -d .git ]; then
-  echo '```'
-  echo "Branch:  $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '(detached)')"
-  echo "HEAD:    $(git rev-parse --short HEAD 2>/dev/null || echo '(none yet)')"
-  echo "Remote:  $(git config --get remote.origin.url 2>/dev/null || echo '(no origin)')"
-  echo
-  echo "Status (short):"
-  git status --short 2>/dev/null | head -40 || echo '(error)'
-  echo
-  echo "Recent commits:"
-  git log --oneline -10 2>/dev/null || echo '(no commits yet)'
-  echo '```'
+
+# --- Source dirs ---
+echo "## Source directories (depth 2)"
+# Show directories under common source roots
+for root in src app lib pages components server api packages apps; do
+  if [[ -d "$root" ]]; then
+    echo "### \`$root/\`"
+    find "$root" -maxdepth 2 -mindepth 1 -type d 2>/dev/null | head -30 | sed 's/^/- /'
+    echo
+  fi
+done
+
+# --- File counts by extension (top extensions only) ---
+echo "## File counts (top extensions)"
+if [[ -d .git ]]; then
+  git ls-files 2>/dev/null | awk -F. 'NF>1 {ext=$NF; if(length(ext)<=6) c[ext]++} END {for(e in c) print c[e], e}' | sort -rn | head -10 | awk '{print "- `."$2"`: "$1" files"}'
 else
-  echo "_Not a git repository._"
+  find . -type f \( -not -path './node_modules/*' -not -path './.git/*' -not -path './dist/*' -not -path './build/*' \) 2>/dev/null | awk -F. 'NF>1 {ext=$NF; if(length(ext)<=6) c[ext]++} END {for(e in c) print c[e], e}' | sort -rn | head -10 | awk '{print "- `."$2"`: "$1" files"}'
 fi
 echo
 
-# --- Tree -----------------------------------------------------------------
-
-echo "## Tree (depth 2)"
-echo
-echo '```'
-if command -v tree >/dev/null 2>&1; then
-  tree -L 2 -a \
-    -I 'node_modules|target|dist|build|.next|.git|.venv|venv|__pycache__|.cache|.DS_Store|.pytest_cache|.mypy_cache|coverage' \
-    2>/dev/null | head -120
-else
-  find . -maxdepth 2 \
-    -not -path '*/node_modules*' \
-    -not -path '*/.git*' \
-    -not -path '*/target*' \
-    -not -path '*/dist*' \
-    -not -path '*/build*' \
-    -not -path '*/.next*' \
-    -not -path '*/.venv*' \
-    -not -path '*/venv*' \
-    -not -path '*/__pycache__*' \
-    | sort | head -120
+# --- Largest source files (signal of complexity hotspots) ---
+echo "## Largest source files (top 15 by line count)"
+if [[ -d .git ]]; then
+  git ls-files 2>/dev/null | grep -Ev '\.(json|lock|yaml|yml|md|svg|png|jpg|jpeg|gif|webp|woff2?|ttf|otf|map|min\.js|min\.css)$' | while read -r f; do
+    [[ -f "$f" ]] && wc -l "$f" 2>/dev/null
+  done | sort -rn | head -15 | awk '{print "- `"$2"` ("$1" lines)"}'
 fi
-echo '```'
 echo
 
-# --- Entry points ---------------------------------------------------------
-
-echo "## Key entry points (heuristic)"
-echo
-for f in \
-  README.md \
-  CLAUDE.md \
-  AGENTS.md \
-  CONTRIBUTING.md \
-  .cursorrules \
-  package.json \
-  pyproject.toml \
-  Cargo.toml \
-  go.mod \
-  Package.swift \
-  src/index.ts src/index.tsx src/index.js \
-  src/main.rs src/main.py \
-  cmd/main.go main.go \
-  app/page.tsx app/layout.tsx \
-  pages/index.tsx pages/_app.tsx \
-  index.html \
-  Dockerfile docker-compose.yml \
-  ; do
-  if [ -f "$f" ]; then
-    echo "- \`$f\`"
+# --- Tests presence ---
+echo "## Test surface"
+test_count=0
+for pat in 'test' 'tests' '__tests__' 'spec' 'specs'; do
+  count=$(find . -type d -name "$pat" -not -path './node_modules/*' -not -path './.git/*' 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "$count" -gt 0 ]]; then
+    echo "- Directories named \`$pat\`: $count"
+    test_count=$((test_count + count))
   fi
 done
+test_files=$(find . -type f \( -name '*.test.*' -o -name '*.spec.*' -o -name 'test_*.py' -o -name '*_test.go' \) -not -path './node_modules/*' -not -path './.git/*' 2>/dev/null | wc -l | tr -d ' ')
+echo "- Test files (by name pattern): $test_files"
 echo
 
-# --- Test config ----------------------------------------------------------
+# --- Config & infra files ---
+echo "## Notable config / infra"
+for f in tsconfig.json next.config.* vite.config.* webpack.config.* tailwind.config.* postcss.config.* eslint.config.* .eslintrc.* prettier.config.* .prettierrc* jest.config.* vitest.config.* playwright.config.* cypress.config.* drizzle.config.* prisma/schema.prisma schema.prisma turbo.json nx.json lerna.json pnpm-workspace.yaml docker-compose.* Dockerfile* .github/workflows .gitlab-ci.yml fly.toml vercel.json netlify.toml wrangler.toml; do
+  for match in $f; do
+    [[ -e "$match" ]] && echo "- \`$match\`"
+  done
+done | sort -u
+echo
 
-echo "## Test / lint config"
+# --- Recent activity (signal of where things are in flux) ---
+echo "## Recent activity (last 10 commits)"
+if [[ -d .git ]]; then
+  git log --no-merges --pretty=format:"- \`%h\` %ad %s" --date=short -10 2>/dev/null
+  echo
+  echo
+  echo "## Files churned in last 20 commits (top 10)"
+  git log --no-merges --name-only --pretty=format: -20 2>/dev/null | grep -v '^$' | sort | uniq -c | sort -rn | head -10 | awk '{print "- `"$2"` ("$1"×)"}'
+fi
 echo
-HITS=0
-for f in \
-  vitest.config.ts vitest.config.js \
-  jest.config.ts jest.config.js \
-  playwright.config.ts \
-  cypress.config.ts \
-  pytest.ini setup.cfg pyproject.toml \
-  .eslintrc .eslintrc.js .eslintrc.json eslint.config.js \
-  .prettierrc \
-  tsconfig.json \
-  ; do
-  if [ -f "$f" ]; then
-    echo "- \`$f\`"
-    HITS=1
-  fi
-done
-[ $HITS -eq 0 ] && echo "_No common test/lint config files found._"
-echo
+
+echo "_End repo map._"
