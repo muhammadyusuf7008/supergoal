@@ -6,6 +6,76 @@ Plan deeply, then autonomously build until it's done.
 
 Works on **Claude Code** and **Codex** (Codex CLI).
 
+## How it works (at a glance)
+
+```mermaid
+flowchart TD
+    Start(["/superplan &lt;your task&gt;"]) --> S0["Stage 0<br/>Load memory + detect tools"]
+    S0 --> S1{Greenfield<br/>or brownfield?}
+    S1 -->|Greenfield| Q1["Stage 1<br/>up to 4 questions"]
+    S1 -->|Brownfield| Q2["Stage 1<br/>0–2 questions"]
+    Q1 --> S2["Stage 2<br/>Recon (parallel)"]
+    Q2 --> S2
+    S2 --> S3["Stage 3<br/>Risks + best practices"]
+    S3 --> S4["Stage 4<br/>Decompose into N phases<br/>(adaptive — no fixed count)"]
+    S4 --> S5["Stage 5<br/>Write ROADMAP, STATE,<br/>phase-N.md specs to disk"]
+    S5 --> S6{"Stage 6<br/>Plan review<br/>+ revision menu"}
+    S6 -->|Revise| S4
+    S6 -->|Start now| S7["Stage 7<br/>Print ready-to-paste /goal"]
+    S7 --> PASTE(["You paste /goal — once"])
+    PASTE --> LOOP["Autonomous loop per phase:<br/>read spec → do work →<br/>SUPERPLAN_PHASE_VERIFY →<br/>write memory → SUPERPLAN_PHASE_DONE"]
+    LOOP --> CHECK{Failure?}
+    CHECK -->|None| NEXT{More phases?}
+    NEXT -->|Yes| LOOP
+    NEXT -->|No| DONE(["SUPERPLAN_RUN_COMPLETE ✓"])
+    CHECK -->|1st| R1["Auto-retry<br/>with probe injected"]
+    R1 --> LOOP
+    CHECK -->|2nd| R2["Write fix-spec,<br/>execute inline"]
+    R2 --> LOOP
+    CHECK -->|3rd| HANDOFF(["STOP — handoff with<br/>full probe history"])
+
+    classDef human fill:#fef3c7,stroke:#d97706,color:#000
+    classDef done fill:#d1fae5,stroke:#059669,color:#000
+    classDef stop fill:#fee2e2,stroke:#dc2626,color:#000
+    class Start,PASTE human
+    class DONE done
+    class HANDOFF stop
+```
+
+Yellow = the only steps you do. Green = success terminal. Red = blocker handoff. Everything else is autonomous.
+
+## How it's different
+
+```mermaid
+flowchart LR
+    subgraph Traditional["Traditional planning"]
+        direction TB
+        A1["Ask for a plan"] --> A2["Plan returned"]
+        A2 --> A3["You execute step 1"]
+        A3 --> A4["Re-prompt"]
+        A4 --> A5["Execute step 2"]
+        A5 --> A6["Re-prompt"]
+        A6 --> A7["... every step ..."]
+        A7 --> A8["Done — many turns"]
+    end
+
+    subgraph Superplan["With Superplan"]
+        direction TB
+        B1["/superplan &lt;task&gt;"] --> B2["Plan + per-phase specs<br/>+ risks + memory hits"]
+        B2 --> B3["Approve once"]
+        B3 --> B4["Paste /goal once"]
+        B4 --> B5["Autonomous run<br/>self-heals failures<br/>writes memories"]
+        B5 --> B6["Done"]
+    end
+
+    classDef toil fill:#fee2e2,stroke:#dc2626,color:#000
+    classDef ease fill:#d1fae5,stroke:#059669,color:#000
+    class A3,A4,A5,A6,A7 toil
+    class B5 ease
+```
+
+Two human touches total: one approval, one paste. The plan is **deeper** than a one-shot plan (recon, risk list, memory-informed phase shaping, validated specs) and the execution is **autonomous** instead of step-by-step babysitting.
+
 ## Why one `/goal` (not a chain)
 
 `/goal` on both hosts takes a short **end-state condition** that an evaluator checks against the transcript after each turn — not a long task body. Superplan leverages this directly: one `/goal` covers the whole run; phase work lives in files the agent reads from disk. No char budget, no inter-session chain, no fragility.
