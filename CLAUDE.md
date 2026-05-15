@@ -12,9 +12,11 @@ Full project doc: see [AGENTS.md](AGENTS.md).
 
 ### File map you actually edit
 
-- `skills/supergoal/SKILL.md` — the skill content. Edit here for behavioral changes.
-- `skills/supergoal/references/*.md` — progressive-disclosure docs the agent reads when needed.
-- `skills/supergoal/templates/PROTOCOL.md` — execution loop + failure recovery + audit. Edit here when changing the per-`/goal`-session protocol.
+- `skills/supergoal/SKILL.md` — the skill content. Edit here for behavioral changes. ~520 lines (over the prior 500-line soft budget after v0.6; phase-loop section duplicates `PROTOCOL.md` and is a slim-down candidate).
+- `skills/supergoal/references/*.md` — progressive-disclosure docs the agent reads when needed (`planning-depth.md`, `phase-design.md`, `goal-format.md`).
+- `skills/supergoal/templates/PROTOCOL.md` — execution loop + failure recovery + final audit. Edit here when changing the per-`/goal`-session protocol.
+- `skills/supergoal/templates/STATE.md` — live-progress template the planner copies to `.supergoal/STATE.md` per run. Contains `Baseline ref:` (the HEAD sha captured at Stage 7 dispatch; the final audit reads it to diff deliverables).
+- `skills/supergoal/templates/ROADMAP.md` — phase plan with `Deliverables:` bullets; the audit's deliverable check parses these bullets directly.
 - `.claude-plugin/plugin.json` — bump `version` on every shipped change so the marketplace cache refreshes.
 - `CHANGELOG.md` — add a top entry per release.
 - `README.md` — public-facing only. Edit for docs / Mermaid diagram tweaks. No version bump needed.
@@ -64,7 +66,7 @@ Everything in lowercase `supergoal`. The plugin name, marketplace name, skill fr
 
 ### Version bumping
 
-Source of truth is `.claude-plugin/plugin.json`'s `version`. Must match README's "Current: v..." line and the latest `CHANGELOG.md` entry. Tag the same number: `git tag -a v0.5.x -m "..." && git push origin v0.5.x`.
+Source of truth is `.claude-plugin/plugin.json`'s `version`. Must match README's "Current: v..." line, the latest `CHANGELOG.md` entry, and the "Working state (as of vX.Y.Z — …)" line in `AGENTS.md`. Tag the same number: `git tag -a v0.6.x -m "..." && git push origin v0.6.x`.
 
 ### Slash command mechanics
 
@@ -74,15 +76,20 @@ Source of truth is `.claude-plugin/plugin.json`'s `version`. Must match README's
 
 ### Transcript markers
 
-The agent inside the `/goal` session must print these named blocks:
+**Inside the `/goal` session** (the autonomous run). The agent must print these named blocks; they're how the host evaluator + the user judge progress:
 
-- `SUPERGOAL_PHASE_START` / `_VERIFY` / `_DONE`
+- `SUPERGOAL_PHASE_START` / `SUPERGOAL_PHASE_VERIFY` (v0.6 added a `Cleanliness:` section) / `SUPERGOAL_PHASE_DONE`
 - `MEMORY_SAVED`
-- `AUDIT_START` / `AUDIT_VERIFY` / `AUDIT_GAPS` / `AUDIT_COMPLETE` / `AUDIT_HANDOFF`
-- `SUPERGOAL_RUN_COMPLETE`
+- `AUDIT_START` / `AUDIT_VERIFY` (v0.6 added a `Deliverables:` block from the diff-based check) / `AUDIT_GAPS` / `AUDIT_COMPLETE` (v0.6 added `Audit coverage:`) / `AUDIT_HANDOFF`
+- `SUPERGOAL_RUN_COMPLETE` (v0.6 prepends a `⚠ Audit coverage: …` honesty banner when trust-prior > 30%)
 - `FAILURE_PROBE` / `FAILURE_ESCALATE` / `FAILURE_HANDOFF`
 
-These are how the `/goal` evaluator decides the run is done. Don't rename without thinking through the protocol + the end-state condition string.
+**Inside the planner session** (Supergoal stages, before the `/goal` is dispatched). The user sees these but the `/goal` evaluator doesn't (it isn't active yet):
+
+- `Self-critique:` — inside the Stage 6 plan-review summary (Stage 6a — 1–3 findings or `clean`)
+- `PREFLIGHT_GREEN` / `PREFLIGHT_RED` — Stage 6.5 output after running the deduplicated mandatory commands once
+
+These are how the `/goal` evaluator decides the run is done. Don't rename the `/goal`-session markers without thinking through the protocol + the end-state condition string.
 
 The `/goal` end-state requires `SUPERGOAL_RUN_COMPLETE` preceded by `AUDIT_COMPLETE` and one `SUPERGOAL_PHASE_DONE` per phase, with no `FAILURE_HANDOFF` or `AUDIT_HANDOFF`.
 
@@ -94,6 +101,9 @@ The `/goal` end-state requires `SUPERGOAL_RUN_COMPLETE` preceded by `AUDIT_COMPL
 - **`/plugin marketplace add owner/repo` shorthand defaults to SSH** → fails for users without GitHub SSH keys. README leads with the HTTPS URL form for this reason.
 - **Codex install is a one-way copy** → users have to re-clone on update. Mention in any breaking-change CHANGELOG.
 - **The skill description is the trigger** → tweak it carefully. Lead with `/supergoal` and natural-language phrases users actually type. Keep it pushy.
+- **Updating SKILL.md/PROTOCOL.md? Codex stays in sync only via manual `rm -rf … && cp -R …`.** After any shipped change, re-run the copy and verify with `diff -r skills/supergoal ~/.codex/skills/supergoal` → expect `(no output)`. AGENTS.md's "Working state" section documents the latest verified sync.
+- **v0.6 cleanliness greps run against `git diff <Baseline ref>..HEAD`** — `Baseline ref:` is captured at Stage 7 from `git rev-parse HEAD 2>/dev/null || echo "no-git"`. If a user runs `/supergoal` in a directory without git history, the audit's diff check falls back to `ls`/`git ls-files`, but the cleanliness counts will have no diff to grep — phases in that mode should treat cleanliness as `trust-prior-verify`-shaped.
+- **Honesty test for v0.6 Stage 6a self-critique**: if it produces `clean` on essentially every real plan, it's theater and gets dropped. AGENTS.md "Open work" tracks the heuristic — don't defend the feature for its own sake.
 
 ## When in doubt
 

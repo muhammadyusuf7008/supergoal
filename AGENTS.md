@@ -62,9 +62,11 @@ After editing:
 
 1. **Validate any manifests you touched** — `claude plugin validate .claude-plugin/plugin.json` and `claude plugin validate .claude-plugin/marketplace.json`.
 2. **Validate any phase spec template** — `bash skills/supergoal/scripts/validate-phase.sh skills/supergoal/templates/phase-goal.txt`.
-3. **Bump the version** in `.claude-plugin/plugin.json` (`0.5.x → 0.5.x+1` for backwards-compatible patches, `0.x → 0.x+1` for new features, `x.0` for breaking changes). The marketplace cache only refreshes when this field changes.
+3. **Bump the version** in `.claude-plugin/plugin.json` (`0.6.x → 0.6.x+1` for backwards-compatible patches, `0.x → 0.x+1` for new features, `x.0` for breaking changes). The marketplace cache only refreshes when this field changes.
 4. **Add a CHANGELOG entry** at the top of `CHANGELOG.md`, Keep-a-Changelog format.
-5. **Commit, push, tag** with the new version: `git tag -a v0.5.x -m "..."`, `git push origin v0.5.x`.
+5. **Commit, push, tag** with the new version: `git tag -a v0.6.x -m "..."`, `git push origin v0.6.x`.
+6. **Re-sync to Codex**: `rm -rf ~/.codex/skills/supergoal && cp -R skills/supergoal ~/.codex/skills/supergoal`, then verify byte-identical with `diff -r skills/supergoal ~/.codex/skills/supergoal`.
+7. **Update this file's "Working state" line** to the new version + brief note on what shipped.
 
 ### Editing READMEs / docs only
 
@@ -121,17 +123,32 @@ cp -R /Users/robert/Code/supergoal/skills/supergoal ~/.codex/skills/supergoal
 
 ## Transcript markers (load-bearing)
 
-These are the named blocks the executing agent must print into the transcript. The host's `/goal` evaluator + the user both read them.
+### Inside the `/goal` session
+
+Named blocks the executing agent must print into the transcript. The host's `/goal` evaluator + the user both read them.
 
 - `SUPERGOAL_PHASE_START` — once per phase, at the start. Metadata only.
-- `SUPERGOAL_PHASE_VERIFY` — once per phase, before DONE. Each criterion pass/fail with evidence.
+- `SUPERGOAL_PHASE_VERIFY` — once per phase, before DONE. Each criterion pass/fail with evidence; engineering checks; **v0.6: `Cleanliness:` section** with grep counts vs `Baseline ref` (debug prints, session TODO/FIXME, dead imports). Non-zero cleanliness counts trigger 3-strike unless the phase spec declares `Cleanliness override:`.
 - `MEMORY_SAVED` — once per phase, between VERIFY and DONE. `<name>` or `none`.
 - `SUPERGOAL_PHASE_DONE` — once per phase, final block.
 - `FAILURE_PROBE` / `FAILURE_ESCALATE` / `FAILURE_HANDOFF` — 3-strike phase-criterion recovery.
-- `AUDIT_START` / `AUDIT_VERIFY` / `AUDIT_GAPS` / `AUDIT_COMPLETE` / `AUDIT_HANDOFF` — final audit pass.
-- `SUPERGOAL_RUN_COMPLETE` — only after `AUDIT_COMPLETE`. Run is done.
+- `AUDIT_START` / `AUDIT_VERIFY` (**v0.6: includes a `Deliverables:` block from the diff-based check vs `Baseline ref`**) / `AUDIT_GAPS` / `AUDIT_COMPLETE` (**v0.6: includes `Audit coverage:` line**) / `AUDIT_HANDOFF` — final audit pass.
+- `SUPERGOAL_RUN_COMPLETE` — only after `AUDIT_COMPLETE`. Run is done. **v0.6: prepends a `⚠ Audit coverage: …` warning banner when trust-prior is > 30% of total checks.**
 
 The `/goal` end-state requires `SUPERGOAL_RUN_COMPLETE` preceded by `AUDIT_COMPLETE` and one `SUPERGOAL_PHASE_DONE` per phase, with no `FAILURE_HANDOFF` or `AUDIT_HANDOFF`.
+
+### Inside the planner session (v0.6)
+
+Before the user pastes `/goal`, the planner emits two additional named blocks the user sees in Stage 6/6.5:
+
+- `Self-critique:` — printed inside the Stage 6 plan-review summary (Stage 6a). 1–3 findings (falsifiability of criteria, phase atomicity, weakest dependency) or `clean`. Falsifiability issues are rewritten in place in the phase specs before the summary prints — so the user sees the post-critique version.
+- `PREFLIGHT_GREEN` / `PREFLIGHT_RED` — Stage 6.5 output after running the deduplicated mandatory commands once. `PREFLIGHT_RED` re-enters Stage 6 with a "Skip pre-flight, dispatch anyway" option for cases where the broken baseline is exactly what phase 1 will fix.
+
+These are not part of the `/goal` end-state — the `/goal` session hasn't started yet at this point — but they're load-bearing for plan quality.
+
+### Other v0.6 state
+
+- **`Baseline ref:`** in `.supergoal/STATE.md` is captured at Stage 7 dispatch from `git rev-parse HEAD 2>/dev/null || echo "no-git"`. The audit reads it for the deliverable diff check and the cleanliness greps reference it for per-phase scoping.
 
 Full format spec: `skills/supergoal/references/goal-format.md`.
 
