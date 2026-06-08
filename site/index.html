@@ -192,9 +192,11 @@ PREFLIGHT_GREEN
             </div>
             <pre><code>{
   "schema_version": "1.0",
-  "phases": [
-    {"id": 1, "allowed_paths": ["src/auth/"], "commands": ["test"]}
-  ]
+  "phase": {
+    "id": 1,
+    "allowed_paths": ["src/auth/"],
+    "commands": ["test"]
+  }
 }</code></pre>
           </article>
           <article class="deck-slide">
@@ -204,10 +206,10 @@ PREFLIGHT_GREEN
               <p>Command output, diff summaries, screenshots, and audit notes live in <code>evidence/phase-N/</code>. The transcript can summarize proof; the run keeps the proof.</p>
             </div>
             <pre><code>evidence/
-└── phase-3/
-    ├── commands/test.log
-    ├── diffs/summary.txt
-    └── screenshots/mobile.png</code></pre>
+`-- phase-3/
+    |-- commands/test.log
+    |-- diffs/summary.txt
+    `-- screenshots/mobile.png</code></pre>
           </article>
           <article class="deck-slide">
             <div class="slide-index">03</div>

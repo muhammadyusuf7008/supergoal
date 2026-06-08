@@ -492,6 +492,8 @@ h2 {
   top: 96px;
   display: grid;
   gap: 10px;
+  grid-column: 1;
+  grid-row: 1 / span 5;
   align-self: start;
   padding-top: 12px;
 }
@@ -512,6 +514,7 @@ h2 {
 
 .deck-slide {
   display: grid;
+  grid-column: 2;
   grid-template-columns: 70px minmax(0, 0.9fr) minmax(360px, 0.95fr);
   gap: 28px;
   align-items: center;
@@ -1127,6 +1130,7 @@ h2 {
   }
 
   .deck-slide {
+    grid-column: 1;
     grid-template-columns: 58px minmax(0, 1fr);
   }
 
